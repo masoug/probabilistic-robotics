@@ -11,7 +11,7 @@ class BayesFilter(object):
     p(z3 | x3, z1, z2, u1, u2, u3) * p(x3 | z1, z2, u1, u2, u3) / p(z3 | z1, z2, u1, u2, u3)
 
     Starting with p(z3 | z1, z2, u1, u2, u3), we notice that it does not contain any state variables. Hence this value
-    stays constant across all state values so we tend to abbreviate this as a normalizer
+    stays constant across all state values so we abbreviate this as a normalizer
     n = 1/p(z3 | z1, z2, u1, u2, u3)
 
     We know p(z3 | x3, z1, z2, u1, u2, u3) because that is the sensor noise model. Now is it the case that the current
@@ -60,29 +60,14 @@ class BayesFilter(object):
         return new_belief
 
 
-# measurement noise model for the robot's door sensor, as a lookup table RobotDoorSensor[measurement][state]
-RobotDoorSensor = {'sense_open': {'is_open': 0.6, 'is_closed': 0.2},
-                   'sense_closed': {'is_open': 0.4, 'is_closed': 0.8}}
+class HistogramFilter(BayesFilter):
+    """This class overrides the predict and measurement update steps to explain the theory and intuition of how this
+    filter works. """
 
-# manipulator noise model for robot's door pusher, as a lookup table RobotDoorManipulator[state][action][prev_state]
-RobotDoorManipulator = {
-    'is_open': {
-        'push': {'is_open': 1.0, 'is_closed': 0.8},
-        'do_nothing': {'is_open': 1.0, 'is_closed': 0.0}
-    },
-    'is_closed': {
-        'push': {'is_open': 0.0, 'is_closed': 0.2},
-        'do_nothing': {'is_open': 0.0, 'is_closed': 1.0}
-    }}
-
-
-class RobotDoorFilter(BayesFilter):
-    """Example usage of the bayes filter algorithm. Implements example 2.4.2 of the probabilistic robotics book.
-    Here, we use the framework of the BayesFilter class to implement a simple door state estimator. This class
-    overrides the predict and measurement update steps to explain the theory and intuition of how this filter works."""
-
-    def __init__(self):
-        super(RobotDoorFilter, self).__init__({'is_open': 0.5, 'is_closed': 0.5})
+    def __init__(self, measurement_model, control_model, initial_belief):
+        super(HistogramFilter, self).__init__(initial_belief)
+        self.measurement_model = measurement_model
+        self.control_model = control_model
 
     def predict(self, control_input):
         """Implement the prediction step given by sum(x0)[ p(x1 | u, x0) * bel(x0) ]
@@ -98,7 +83,7 @@ class RobotDoorFilter(BayesFilter):
             for prev_state in self.belief.keys():
                 # ...given by the product of the probability the robot is in some previous state (belief)
                 # and the probability that the robot will transition to the next_state
-                prediction[next_state] += RobotDoorManipulator[next_state][control_input][prev_state] \
+                prediction[next_state] += self.control_model[next_state][control_input][prev_state] \
                                           * self.belief[prev_state]
 
         # you're then left with a new belief that reflects the application of the control input on the previous
@@ -113,10 +98,10 @@ class RobotDoorFilter(BayesFilter):
         # compute the new probabilities for each next_state, by multiplying the sensor measurement probability with the
         # predicted belief distribution...
         for next_state in self.belief.keys():
-            new_belief[next_state] = RobotDoorSensor[measurement][next_state] * prediction[next_state]
+            new_belief[next_state] = self.measurement_model[measurement][next_state] * prediction[next_state]
 
         # ...then normalize the probabilities. This keeps the belief distribution as a probability density function
-        # since the products may sum greater than 1.
+        # since the products may not sum to 1.
         normalization = sum(new_belief.values())
         for state in self.belief.keys():
             new_belief[state] /= normalization
@@ -138,7 +123,26 @@ def main():
     time as the robot cycles between sensing and applying an action, with the hope that the belief distribution will
     converge to one state of the door."""
 
-    door_filter = RobotDoorFilter()
+    """Example usage of the bayes filter algorithm. Implements example 2.4.2 of the probabilistic robotics book.
+    Here, we use the framework of the BayesFilter class to implement a simple door state estimator. """
+
+    # measurement noise model for the robot's door sensor, as a lookup table RobotDoorSensor[measurement][state]
+    RobotDoorSensor = {'sense_open': {'is_open': 0.6, 'is_closed': 0.2},
+                       'sense_closed': {'is_open': 0.4, 'is_closed': 0.8}}
+
+    # manipulator noise model for robot's door pusher, as a lookup table RobotDoorManipulator[state][action][prev_state]
+    RobotDoorManipulator = {
+        'is_open': {
+            'push': {'is_open': 1.0, 'is_closed': 0.8},
+            'do_nothing': {'is_open': 1.0, 'is_closed': 0.0}
+        },
+        'is_closed': {
+            'push': {'is_open': 0.0, 'is_closed': 0.2},
+            'do_nothing': {'is_open': 0.0, 'is_closed': 1.0}
+        }}
+
+    door_filter = HistogramFilter(RobotDoorSensor, RobotDoorManipulator,
+                                  {'is_open': 0.5, 'is_closed': 0.5})
     print(f'Door filter initial belief: {door_filter.belief}')
 
     print(f"  Sense open and did nothing: {door_filter.step('sense_open', 'do_nothing')}")
